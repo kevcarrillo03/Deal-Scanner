@@ -275,8 +275,3 @@ Deal-Scanner/
 - **US only.** Product coverage, retailers, and prices (USD) are all US-focused.
 - **Free-tier API limits.** UPCItemDB's trial allows about 100 lookups per day, and SerpApi's free plan allows 250 searches per month. Caching reduces how quickly these are used.
 - **Cold starts on the free host.** The deployed backend sleeps when idle, so the first request after a quiet period takes up to a minute.
-
-## Future Improvements
-
-- Unit and integration tests for price merging and the scan endpoint
-- International support (more product databases, regional stores, local currencies)
