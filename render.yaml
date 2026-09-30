@@ -1,0 +1,22 @@
+# render blueprint: creates the backend on render's free plan from backend/Dockerfile.
+# in render: New > Blueprint > pick this repo. you'll be asked for the values marked sync: false
+services:
+  - name: deal-scanner-backend
+    type: web
+    runtime: docker
+    plan: free
+    rootDir: backend # only redeploy when files in backend/ change
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /actuator/health
+    envVars:
+      # from serpapi.com
+      - key: SERPAPI_API_KEY
+        sync: false
+      # from neon.tech, in jdbc form: jdbc:postgresql://<host>/<database>?sslmode=require
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
