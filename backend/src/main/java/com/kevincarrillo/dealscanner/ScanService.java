@@ -5,11 +5,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
@@ -24,7 +23,8 @@ public class ScanService {
 
     private static final Duration PRICE_MAX_AGE = Duration.ofHours(12);
 
-    private final WebClient webClient;
+    private final UpcItemDbClient upcItemDbClient;
+    private final OpenFoodFactsClient openFoodFactsClient;
     private final PriceService priceService;
     private final ScanStore scanStore;
 
@@ -33,8 +33,10 @@ public class ScanService {
             .expireAfter(Expiry.creating((String upc, ScanResult result) -> timeUntilStale(result)))
             .buildAsync();
 
-    public ScanService(WebClient.Builder webClientBuilder, PriceService priceService, ScanStore scanStore){
-        this.webClient = webClientBuilder.baseUrl("https://api.upcitemdb.com/prod/trial").build();
+    public ScanService(UpcItemDbClient upcItemDbClient, OpenFoodFactsClient openFoodFactsClient,
+            PriceService priceService, ScanStore scanStore){
+        this.upcItemDbClient = upcItemDbClient;
+        this.openFoodFactsClient = openFoodFactsClient;
         this.priceService = priceService;
         this.scanStore = scanStore;
     }
@@ -84,41 +86,30 @@ public class ScanService {
     }
 
     private Mono<UpcResponse.Item> findItem(String upc){
-        return fetchFromUpcItemDb(upc)
-                .onErrorResume(
-                        error -> error instanceof ResponseStatusException status && status.getStatusCode() != HttpStatus.NOT_FOUND,
-                        error -> blocking(() -> scanStore.findProduct(upc))
-                                .onErrorResume(dbError -> Mono.just(Optional.empty()))
-                                .flatMap(saved -> {
-                                    if (saved.isEmpty()) return Mono.error(error);
-                                    System.out.println("upcitemdb unavailable, using saved product for upc: " + upc);
-                                    String imageUrl = saved.get().getImageUrl();
-                                    return Mono.just(new UpcResponse.Item(
-                                            saved.get().getName(), null, null, imageUrl == null ? null : List.of(imageUrl), null));
-                                }));
+        AtomicReference<Throwable> upcItemDbError = new AtomicReference<>();
+
+        return upcItemDbClient.lookup(upc)
+                .onErrorResume(error -> {
+                    upcItemDbError.set(error);
+                    return Mono.empty();
+                })
+                .switchIfEmpty(Mono.defer(() -> openFoodFactsClient.lookup(upc)
+                        .onErrorResume(error -> Mono.empty())))
+                .switchIfEmpty(Mono.defer(() -> savedProduct(upc)))
+                .switchIfEmpty(Mono.defer(() -> Mono.error(upcItemDbError.get() != null
+                        ? upcItemDbError.get()
+                        : new ResponseStatusException(HttpStatus.NOT_FOUND, "product not found: " + upc))));
     }
 
-    private Mono<UpcResponse.Item> fetchFromUpcItemDb(String upc){
-        System.out.println("looking up upc: " + upc);
-
-        return this.webClient.get()
-                .uri(uriBuilder -> uriBuilder.path("/lookup").queryParam("upc", upc).build())
-                .retrieve()
-                .bodyToMono(UpcResponse.class)
-                .onErrorMap(WebClientResponseException.class, error -> {
-                    System.out.println("upcitemdb error " + error.getStatusCode() + " for upc: " + upc);
-                    if (error.getStatusCode().value() == 429){
-                        return new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "lookup limit reached, try again later");
-                    }
-                    return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "lookup failed for upc: " + upc);
-                })
-                .flatMap(response -> {
-                    if (response.items() == null || response.items().isEmpty()){
-                        return Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "product not found: " + upc));
-                    }
-                    UpcResponse.Item item = response.items().get(0);
-                    System.out.println("product found: " + item.title());
-                    return Mono.just(item);
+    private Mono<UpcResponse.Item> savedProduct(String upc){
+        return blocking(() -> scanStore.findProduct(upc))
+                .onErrorResume(error -> Mono.just(Optional.empty()))
+                .flatMap(saved -> {
+                    if (saved.isEmpty()) return Mono.empty();
+                    System.out.println("using saved product for upc: " + upc);
+                    String imageUrl = saved.get().getImageUrl();
+                    return Mono.just(new UpcResponse.Item(
+                            saved.get().getName(), null, null, imageUrl == null ? null : List.of(imageUrl), null));
                 });
     }
 

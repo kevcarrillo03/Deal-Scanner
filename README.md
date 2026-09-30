@@ -7,7 +7,7 @@ The project has two parts: a **React Native (Expo) app** for scanning and showin
 ## Features
 
 - **Barcode scanning** of UPC-A, UPC-E, EAN-13, and EAN-8 barcodes with the phone camera, with an on-screen guide box.
-- **Product lookup** that turns a barcode into a product name through the UPCItemDB API.
+- **Product lookup** that turns a barcode into a product name through UPCItemDB, falling back to Open Food Facts when UPCItemDB is rate-limited, unavailable, or doesn't know the product.
 - **Price comparison** that merges two data sources:
   - Google Shopping results through SerpApi.
   - Store prices recorded by UPCItemDB, ignoring any older than 90 days.
@@ -23,7 +23,7 @@ The project has two parts: a **React Native (Expo) app** for scanning and showin
 | Mobile app | React Native 0.86, Expo SDK 57, Expo Router, expo-camera, TypeScript |
 | Backend | Java 17, Spring Boot 4, Spring WebClient (non-blocking HTTP), Project Reactor, Caffeine cache |
 | Database | PostgreSQL 18, Spring Data JPA, Flyway migrations, Docker Compose |
-| External APIs | [UPCItemDB](https://www.upcitemdb.com/) (product lookup), [SerpApi](https://serpapi.com/) Google Shopping (prices) |
+| External APIs | [UPCItemDB](https://www.upcitemdb.com/) and [Open Food Facts](https://world.openfoodfacts.org/) (product lookup), [SerpApi](https://serpapi.com/) Google Shopping (prices) |
 
 ## How It Works
 
@@ -33,6 +33,7 @@ sequenceDiagram
     participant API as Spring Boot API
     participant Cache as Caffeine Cache
     participant UPC as UPCItemDB
+    participant OFF as Open Food Facts
     participant Serp as SerpApi (Google Shopping)
 
     App->>API: GET /api/v1/scan/{upc}
@@ -41,7 +42,12 @@ sequenceDiagram
         Cache-->>API: Stored result
     else Not cached
         API->>UPC: Look up barcode
-        UPC-->>API: Product name + recorded store prices
+        alt Found
+            UPC-->>API: Product name + recorded store prices
+        else Rate-limited, unavailable, or not found
+            API->>OFF: Look up barcode
+            OFF-->>API: Brand, product name, size, image
+        end
         API->>Serp: Search Google Shopping for product name
         Serp-->>API: Shopping listings
         API->>API: Match retailers, drop stale prices,<br/>keep cheapest per store, sort
@@ -51,7 +57,7 @@ sequenceDiagram
 ```
 
 1. The app scans a barcode and opens the results screen, which calls the backend.
-2. The backend checks its cache. On a miss, it asks UPCItemDB what the product is. UPCItemDB also returns store prices it has recorded.
+2. The backend checks its cache and database. On a miss, it asks UPCItemDB what the product is. UPCItemDB also returns store prices it has recorded. If UPCItemDB is rate-limited, unavailable, or doesn't know the barcode, the backend asks Open Food Facts instead, and then falls back to the product saved from an earlier scan.
 3. The backend searches Google Shopping (through SerpApi) for the product name.
 4. Listings from both sources are matched against a list of major retailers, and stale or invalid prices are dropped. The cheapest listing per store is kept.
 5. The result is cached and returned to the app, which shows each store's price with a link to the listing.
@@ -60,7 +66,8 @@ sequenceDiagram
 
 - **Two price sources instead of one.** Google Shopping's default results are often dominated by small shops and miss the big retailers. UPCItemDB's recorded prices fill that gap for free, since they come with the product lookup. Its prices can be years old, so anything older than 90 days is dropped.
 - **An async cache that shares in-flight lookups.** The cache is a Caffeine `AsyncCache`, so if two scans of the same barcode arrive at the same time they share one lookup instead of making duplicate API calls. Failed lookups are not cached, so a temporary error doesn't stick for 12 hours.
-- **Degrading gracefully.** If the Google Shopping search fails, the app still gets the product name and UPCItemDB's prices instead of an error.
+- **A fallback for product lookup.** UPCItemDB's free trial limits requests per IP address, and hosting platforms like Render share outgoing IP addresses between many apps, so the shared address is often already over the limit. The backend tries UPCItemDB, then Open Food Facts (free, no key, and strong coverage of groceries), then the product saved from an earlier scan, so scanning keeps working when one source is unavailable.
+- **Degrading gracefully.** If the Google Shopping search fails, the app still gets the product name and UPCItemDB's prices instead of an error. If the database is unreachable, scans still work without being saved.
 - **Keeping secrets out of the code.** The SerpApi key is read from an environment variable or a git-ignored `.env` file, never committed.
 
 ## API
@@ -99,9 +106,9 @@ Looks up a barcode and returns the product with its prices, cheapest first.
 
 | Status | Meaning |
 |---|---|
-| `404 Not Found` | No product found for this barcode |
-| `429 Too Many Requests` | UPCItemDB's rate limit was reached |
-| `502 Bad Gateway` | The product lookup failed |
+| `404 Not Found` | No source (UPCItemDB, Open Food Facts, or the database) knows this barcode |
+| `429 Too Many Requests` | UPCItemDB's rate limit was reached and no other source could identify the product |
+| `502 Bad Gateway` | UPCItemDB failed and no other source could identify the product |
 
 An optional `X-Device-Id` header tags the scan with the phone that made it, for the recent scans list.
 
@@ -151,7 +158,7 @@ A product's price checks over the last `days` days (1 to 365, default 30), newes
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (runs the PostgreSQL database)
 - Node.js (LTS)
 - The [Expo Go](https://expo.dev/go) app on your phone
-- A free [SerpApi](https://serpapi.com/) API key (UPCItemDB's trial endpoint needs no key)
+- A free [SerpApi](https://serpapi.com/) API key (UPCItemDB's trial endpoint and Open Food Facts need no key)
 
 ### 1. Run the backend
 
@@ -193,7 +200,7 @@ Scan the QR code shown in the terminal with your phone's camera (iOS) or the Exp
 
 ## Deploying (free)
 
-The backend deploys as a Docker container to [Render](https://render.com)'s free plan, with the database on [Neon](https://neon.tech)'s free PostgreSQL. Free Render services sleep after about 15 minutes without traffic, so the first request after that takes up to a minute while the server wakes up. The app shows a "Waking up the server" message during that wait.
+The backend deploys as a Docker container to [Render](https://render.com)'s free plan, with the database on [Neon](https://neon.tech)'s free PostgreSQL. Free Render services sleep after about 15 minutes without traffic, so the first request after that is slow while the server wakes up, a minute or more on the free plan's small CPU. The app shows a "Waking up the server" message during that wait.
 
 ### 1. Create the database on Neon
 
@@ -250,6 +257,8 @@ Deal-Scanner/
 │       └── java/com/kevincarrillo/dealscanner/
 │           ├── ScanController.java           /api/v1/scan endpoint
 │           ├── ScanService.java              Scan flow: cache, database, external APIs
+│           ├── UpcItemDbClient.java          Product lookup on UPCItemDB
+│           ├── OpenFoodFactsClient.java      Fallback product lookup on Open Food Facts
 │           ├── ScanStore.java                Saving and loading scans in the database
 │           ├── PriceService.java             Price search, retailer matching, merging
 │           ├── HistoryController.java        Recent scans and price history endpoints
@@ -273,5 +282,6 @@ Deal-Scanner/
 ## Limitations
 
 - **US only.** Product coverage, retailers, and prices (USD) are all US-focused.
-- **Free-tier API limits.** UPCItemDB's trial allows about 100 lookups per day, and SerpApi's free plan allows 250 searches per month. Caching reduces how quickly these are used.
-- **Cold starts on the free host.** The deployed backend sleeps when idle, so the first request after a quiet period takes up to a minute.
+- **Free-tier API limits.** UPCItemDB's trial allows about 100 lookups per day per IP address, and SerpApi's free plan allows 250 searches per month. Caching reduces how quickly these are used.
+- **Non-food products on shared hosting.** When UPCItemDB is rate-limited (common on Render, where the IP address is shared), products are identified through Open Food Facts, which covers food and drinks. Other products can't be identified until UPCItemDB is available, and prices then come from Google Shopping only.
+- **Cold starts on the free host.** The deployed backend sleeps when idle, so the first request after a quiet period can take a minute or more.
