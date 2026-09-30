@@ -6,8 +6,8 @@ services:
     runtime: docker
     plan: free
     rootDir: backend # only redeploy when files in backend/ change
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /actuator/health
     envVars:
       # from serpapi.com
