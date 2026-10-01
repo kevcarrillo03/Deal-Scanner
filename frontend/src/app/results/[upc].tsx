@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Button, FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Button, Image, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import * as Linking from 'expo-linking';
 import { router, useLocalSearchParams } from 'expo-router';
 
-import { fetchPriceHistory, fetchScan, PriceHistory, ScanError, ScanResult, StorePrice } from '@/api/scan';
+import { fetchPriceHistory, fetchScan, isMajorRetailer, PriceHistory, ScanError, ScanResult, StorePrice } from '@/api/scan';
 import { useIsSlow } from '@/hooks/useIsSlow';
 import { formatDay, formatPrice, formatWhen } from '@/utils/format';
 
 const HISTORY_DAYS = 30;
 const HISTORY_ROWS = 5;
+
+type PriceSection = { key: 'major' | 'more'; title: string; note?: string; data: StorePrice[] };
 
 export default function ResultsScreen() {
   const { upc } = useLocalSearchParams<{ upc: string }>();
@@ -58,13 +60,29 @@ export default function ResultsScreen() {
     );
   }
 
-  const productImage = result.prices.find((p) => p.thumbnail)?.thumbnail;
+  const majorPrices = result.prices.filter(isMajorRetailer);
+  const otherPrices = result.prices.filter((price) => !isMajorRetailer(price));
+  const productImage = (majorPrices.find((p) => p.thumbnail) ?? otherPrices.find((p) => p.thumbnail))?.thumbnail;
+
+  const sections: PriceSection[] = [];
+  if (majorPrices.length > 0) {
+    sections.push({ key: 'major', title: 'Major retailers', data: majorPrices });
+  }
+  if (otherPrices.length > 0) {
+    sections.push({
+      key: 'more',
+      title: 'More stores',
+      note: 'Check the listing name, these may be a different size or flavor.',
+      data: otherPrices,
+    });
+  }
 
   return (
-    <FlatList
+    <SectionList
       style={styles.list}
       contentContainerStyle={styles.listContent}
-      data={result.prices}
+      sections={sections}
+      stickySectionHeadersEnabled={false}
       keyExtractor={(item) => item.store}
       ListHeaderComponent={
         <View style={styles.header}>
@@ -72,12 +90,23 @@ export default function ResultsScreen() {
           <Text style={styles.productName}>{result.product_name}</Text>
           <Text style={styles.upc}>Barcode: {result.upc}</Text>
           <Text style={styles.upc}>Prices as of {formatWhen(result.fetched_at)}</Text>
+          {majorPrices.length === 0 && otherPrices.length > 0 && (
+            <Text style={styles.noMajorText}>No prices found at major retailers.</Text>
+          )}
         </View>
       }
       ListEmptyComponent={
-        <Text style={styles.emptyText}>No prices found at major stores for this product.</Text>
+        <Text style={styles.emptyText}>No prices found for this product.</Text>
       }
-      renderItem={({ item, index }) => <PriceRow price={item} isBest={index === 0} />}
+      renderSectionHeader={({ section }) => (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>
+            {section.title} ({section.data.length})
+          </Text>
+          {section.note && <Text style={styles.sectionNote}>{section.note}</Text>}
+        </View>
+      )}
+      renderItem={({ item, index, section }) => <PriceRow price={item} isBest={section.key === 'major' && index === 0} />}
       ListFooterComponent={
         <View style={styles.footer}>
           {history && <PriceHistorySection history={history} />}
@@ -121,6 +150,11 @@ function PriceRow({ price, isBest }: { price: StorePrice; isBest: boolean }) {
       onPress={() => price.link && Linking.openURL(price.link)}
       disabled={!price.link}
     >
+      {price.thumbnail ? (
+        <Image source={{ uri: price.thumbnail }} style={styles.rowImage} resizeMode="contain" />
+      ) : (
+        <View style={[styles.rowImage, styles.rowImagePlaceholder]} />
+      )}
       <View style={styles.rowText}>
         <View style={styles.storeLine}>
           <Text style={styles.store}>{price.store}</Text>
@@ -183,6 +217,33 @@ const styles = StyleSheet.create({
   upc: {
     fontSize: 13,
     color: '#888',
+  },
+  noMajorText: {
+    fontSize: 14,
+    color: '#b45309',
+    marginTop: 4,
+  },
+  sectionHeader: {
+    marginTop: 8,
+    gap: 2,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#111',
+  },
+  sectionNote: {
+    fontSize: 13,
+    color: '#888',
+  },
+  rowImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  rowImagePlaceholder: {
+    backgroundColor: '#e5e5ea',
   },
   emptyText: {
     textAlign: 'center',

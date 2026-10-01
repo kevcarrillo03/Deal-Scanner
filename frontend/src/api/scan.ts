@@ -6,7 +6,12 @@ export type StorePrice = {
   title: string;
   link: string;
   thumbnail: string | null;
+  major_retailer?: boolean;
 };
+
+export function isMajorRetailer(price: StorePrice) {
+  return price.major_retailer !== false;
+}
 
 export type ScanResult = {
   upc: string;

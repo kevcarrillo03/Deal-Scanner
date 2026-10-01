@@ -4,9 +4,12 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { BarcodeEntry } from '@/components/BarcodeEntry';
+
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
+  const [typing, setTyping] = useState(false);
   const isScanning = useRef(false);
   const insets = useSafeAreaInsets();
 
@@ -14,8 +17,17 @@ export default function ScannerScreen() {
     useCallback(() => {
       isScanning.current = false;
       setScanned(false);
+      setTyping(false);
     }, [])
   );
+
+  const openResults = (upc: string) => {
+    if (isScanning.current) return;
+    isScanning.current = true;
+    setScanned(true);
+
+    router.push({ pathname: '/results/[upc]', params: { upc } });
+  };
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -23,20 +35,17 @@ export default function ScannerScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, styles.permissionContainer]}>
         <Text style={styles.message}>we need your permission to show the camera</Text>
         <Button onPress={requestPermission} title="grant permission" />
+        <View style={styles.permissionEntry}>
+          <BarcodeEntry onSubmit={openResults} />
+        </View>
       </View>
     );
   }
 
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    if (isScanning.current) return;
-    isScanning.current = true;
-    setScanned(true);
-
-    router.push({ pathname: '/results/[upc]', params: { upc: data } });
-  };
+  const handleBarCodeScanned = ({ data }: { data: string }) => openResults(data);
 
   return (
     <View style={styles.container}>
@@ -72,6 +81,21 @@ export default function ScannerScreen() {
       >
         <Text style={styles.historyButtonText}>History</Text>
       </Pressable>
+
+      {!typing && (
+        <Pressable
+          style={({ pressed }) => [styles.historyButton, styles.typeButton, { top: insets.top + 12 }, pressed && styles.historyButtonPressed]}
+          onPress={() => setTyping(true)}
+        >
+          <Text style={styles.historyButtonText}>Type barcode</Text>
+        </Pressable>
+      )}
+
+      {typing && (
+        <View style={[styles.entryPanel, { top: insets.top + 60 }]}>
+          <BarcodeEntry onSubmit={openResults} onCancel={() => setTyping(false)} />
+        </View>
+      )}
     </View>
   );
 }
@@ -159,6 +183,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.4)',
+  },
+  typeButton: {
+    right: undefined,
+    left: 16,
+  },
+  entryPanel: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+  },
+  permissionContainer: {
+    padding: 24,
+  },
+  permissionEntry: {
+    marginTop: 32,
   },
   historyButtonPressed: {
     opacity: 0.6,
