@@ -99,10 +99,25 @@ class HistoryServiceTests {
         assertTrue(historyService.priceHistory("TEST-UNKNOWN", 30).isEmpty());
     }
 
+    @Test
+    void bestAndLowestPricesOnlyCountMajorRetailers(){
+        saveCheck(chips, Instant.now(), "Local Liquor", "1.15", "Target", "4.19", "Local Market", "2.29");
+        scanRepository.save(new Scan(chips, DEVICE));
+
+        List<RecentScan> recent = historyService.recentScans(DEVICE);
+        PriceHistory history = historyService.priceHistory(CHIPS_UPC, 30).orElseThrow();
+
+        assertEquals("Target", recent.get(0).bestPrice().store());
+        assertEquals("Target", history.lowestPrice().store());
+        assertEquals(1, history.checks().get(0).prices().size());
+    }
+
     private void saveCheck(Product product, Instant checkedAt, String... storesAndPrices){
         PriceCheck check = new PriceCheck(product, checkedAt);
         for (int i = 0; i < storesAndPrices.length; i += 2){
-            check.addSnapshot(new PriceSnapshot(storesAndPrices[i], new BigDecimal(storesAndPrices[i + 1]), null, null, null));
+            String store = storesAndPrices[i];
+            boolean major = !store.startsWith("Local ");
+            check.addSnapshot(new PriceSnapshot(store, new BigDecimal(storesAndPrices[i + 1]), null, null, null, major));
         }
         priceCheckRepository.save(check);
     }

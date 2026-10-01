@@ -42,8 +42,8 @@ class RepositoryTests {
     @Test
     void latestCheckLoadsItsSnapshotsCheapestFirst(){
         PriceCheck check = new PriceCheck(product, Instant.now());
-        check.addSnapshot(new PriceSnapshot("Walgreens", new BigDecimal("4.99"), "Chips", "https://walgreens.com", null));
-        check.addSnapshot(new PriceSnapshot("Target", new BigDecimal("4.19"), "Chips", "https://target.com", null));
+        check.addSnapshot(new PriceSnapshot("Walgreens", new BigDecimal("4.99"), "Chips", "https://walgreens.com", null, true));
+        check.addSnapshot(new PriceSnapshot("Target", new BigDecimal("4.19"), "Chips", "https://target.com", null, true));
         priceCheckRepository.save(check);
 
         PriceCheck latest = priceCheckRepository.findFirstByProductUpcOrderByCheckedAtDesc(TEST_UPC).orElseThrow();
