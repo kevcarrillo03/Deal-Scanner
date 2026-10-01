@@ -35,14 +35,17 @@ public class PriceSnapshot {
 
     private String thumbnailUrl;
 
+    private boolean majorRetailer;
+
     protected PriceSnapshot() {}
 
-    public PriceSnapshot(String store, BigDecimal price, String title, String link, String thumbnailUrl){
+    public PriceSnapshot(String store, BigDecimal price, String title, String link, String thumbnailUrl, boolean majorRetailer){
         this.store = store;
         this.price = price;
         this.title = title;
         this.link = link;
         this.thumbnailUrl = thumbnailUrl;
+        this.majorRetailer = majorRetailer;
     }
 
     void setPriceCheck(PriceCheck priceCheck){ this.priceCheck = priceCheck; }
@@ -54,4 +57,5 @@ public class PriceSnapshot {
     public String getTitle(){ return title; }
     public String getLink(){ return link; }
     public String getThumbnailUrl(){ return thumbnailUrl; }
+    public boolean isMajorRetailer(){ return majorRetailer; }
 }

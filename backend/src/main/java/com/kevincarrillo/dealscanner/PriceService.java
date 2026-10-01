@@ -30,6 +30,9 @@ public class PriceService {
     }
 
     private static final Duration MAX_OFFER_AGE = Duration.ofDays(90);
+    private static final int MAX_STORE_NAME_LENGTH = 100;
+
+    private record Store(String name, boolean major) {}
 
     private final WebClient webClient;
     private final String apiKey;
@@ -62,12 +65,15 @@ public class PriceService {
 
         List<StorePrice> prices = new ArrayList<>();
         for (UpcResponse.Offer offer : item.offers()){
-            String store = matchRetailer(offer.merchant());
-            if (store == null) store = matchRetailer(offer.domain());
+            Store store = store(offer.merchant());
+            if (store == null || !store.major()){
+                Store fromDomain = store(offer.domain());
+                if (fromDomain != null && fromDomain.major()) store = fromDomain;
+            }
             if (store == null || offer.price() == null || offer.price() <= 0) continue;
             if (offer.updatedT() == null || Instant.ofEpochSecond(offer.updatedT()).isBefore(oldestAllowed)) continue;
 
-            prices.add(new StorePrice(store, offer.price(), offer.title(), offer.link(), thumbnail));
+            prices.add(new StorePrice(store.name(), offer.price(), offer.title(), offer.link(), thumbnail, store.major()));
         }
         return prices;
     }
@@ -92,28 +98,31 @@ public class PriceService {
                     if (response.error() != null){
                         System.out.println("serpapi error: " + response.error());
                     }
-                    if (response.shoppingResults() == null){
-                        return List.<StorePrice>of();
-                    }
-
-                    List<StorePrice> prices = new ArrayList<>();
-                    for (SerpApiResponse.ShoppingResult result : response.shoppingResults()){
-                        String store = matchRetailer(result.source());
-                        if (store == null || result.extractedPrice() == null) continue;
-
-                        prices.add(new StorePrice(
-                                store, result.extractedPrice(), result.title(), result.productLink(), result.thumbnail()));
-                    }
-                    return prices;
+                    return fromShoppingResults(response.shoppingResults());
                 });
     }
 
-    private List<StorePrice> cheapestPerStore(List<StorePrice> prices){
+    static List<StorePrice> fromShoppingResults(List<SerpApiResponse.ShoppingResult> results){
+        if (results == null) return List.of();
+
+        List<StorePrice> prices = new ArrayList<>();
+        for (SerpApiResponse.ShoppingResult result : results){
+            Store store = store(result.source());
+            if (store == null || result.extractedPrice() == null || result.extractedPrice() <= 0) continue;
+
+            prices.add(new StorePrice(
+                    store.name(), result.extractedPrice(), result.title(), result.productLink(), result.thumbnail(), store.major()));
+        }
+        return prices;
+    }
+
+    static List<StorePrice> cheapestPerStore(List<StorePrice> prices){
         Map<String, StorePrice> cheapestByStore = new LinkedHashMap<>();
         for (StorePrice price : prices){
-            StorePrice current = cheapestByStore.get(price.store());
+            String key = price.store().toLowerCase();
+            StorePrice current = cheapestByStore.get(key);
             if (current == null || price.price() < current.price()){
-                cheapestByStore.put(price.store(), price);
+                cheapestByStore.put(key, price);
             }
         }
 
@@ -122,12 +131,17 @@ public class PriceService {
                 .toList();
     }
 
-    private String matchRetailer(String name){
-        if (name == null) return null;
+    private static Store store(String name){
+        if (name == null || name.isBlank()) return null;
+
         String simpleName = name.toLowerCase().replaceAll("[^a-z0-9]", "");
         for (Map.Entry<String, String> retailer : RETAILERS.entrySet()){
-            if (simpleName.startsWith(retailer.getKey())) return retailer.getValue();
+            if (simpleName.startsWith(retailer.getKey())) return new Store(retailer.getValue(), true);
         }
-        return null;
+        if (simpleName.startsWith("ebay")) return new Store("eBay", false);
+
+        String trimmed = name.trim();
+        if (trimmed.length() > MAX_STORE_NAME_LENGTH) trimmed = trimmed.substring(0, MAX_STORE_NAME_LENGTH);
+        return new Store(trimmed, false);
     }
 }

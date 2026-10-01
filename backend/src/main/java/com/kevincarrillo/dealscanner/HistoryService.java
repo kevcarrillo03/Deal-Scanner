@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
@@ -53,7 +54,7 @@ public class HistoryService {
                 .map(scan -> {
                     Product product = productsByUpc.get(scan.getUpc());
                     PricePoint bestPrice = priceCheckRepository.findFirstByProductUpcOrderByCheckedAtDesc(scan.getUpc())
-                            .flatMap(check -> check.getSnapshots().stream().findFirst())
+                            .flatMap(check -> majorRetailerPrices(check).findFirst())
                             .map(this::toPricePoint)
                             .orElse(null);
                     return new RecentScan(scan.getUpc(), product.getName(), product.getImageUrl(), scan.getLastScannedAt(), bestPrice);
@@ -68,11 +69,11 @@ public class HistoryService {
             List<PriceCheck> checks = priceCheckRepository.findByProductUpcAndCheckedAtAfterOrderByCheckedAtDesc(upc, since);
 
             List<HistoryCheck> history = checks.stream()
-                    .map(check -> new HistoryCheck(check.getCheckedAt(), check.getSnapshots().stream().map(this::toPricePoint).toList()))
+                    .map(check -> new HistoryCheck(check.getCheckedAt(), majorRetailerPrices(check).map(this::toPricePoint).toList()))
                     .toList();
 
             LowestPrice lowest = checks.stream()
-                    .flatMap(check -> check.getSnapshots().stream())
+                    .flatMap(this::majorRetailerPrices)
                     .min(Comparator.comparing(PriceSnapshot::getPrice))
                     .map(snapshot -> new LowestPrice(
                             snapshot.getStore(), snapshot.getPrice().doubleValue(), snapshot.getPriceCheck().getCheckedAt()))
@@ -80,6 +81,10 @@ public class HistoryService {
 
             return new PriceHistory(upc, product.getName(), days, lowest, history);
         });
+    }
+
+    private Stream<PriceSnapshot> majorRetailerPrices(PriceCheck check){
+        return check.getSnapshots().stream().filter(PriceSnapshot::isMajorRetailer);
     }
 
     private PricePoint toPricePoint(PriceSnapshot snapshot){

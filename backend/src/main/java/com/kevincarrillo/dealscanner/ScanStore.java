@@ -52,7 +52,8 @@ public class ScanStore {
         PriceCheck check = new PriceCheck(product, result.fetchedAt());
         for (StorePrice price : result.prices()){
             check.addSnapshot(new PriceSnapshot(
-                    price.store(), BigDecimal.valueOf(price.price()), price.title(), price.link(), price.thumbnail()));
+                    price.store(), BigDecimal.valueOf(price.price()), price.title(), price.link(), price.thumbnail(),
+                    price.majorRetailer()));
         }
         priceCheckRepository.save(check);
     }
@@ -69,7 +70,8 @@ public class ScanStore {
                         snapshot.getPrice().doubleValue(),
                         snapshot.getTitle(),
                         snapshot.getLink(),
-                        snapshot.getThumbnailUrl()))
+                        snapshot.getThumbnailUrl(),
+                        snapshot.isMajorRetailer()))
                 .toList();
     }
 }

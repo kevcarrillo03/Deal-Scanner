@@ -1,0 +1,1 @@
+ALTER TABLE price_snapshots ADD COLUMN major_retailer BOOLEAN NOT NULL DEFAULT TRUE;
